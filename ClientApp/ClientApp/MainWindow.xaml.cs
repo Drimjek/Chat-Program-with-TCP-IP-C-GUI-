@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace ChatClient
 {
@@ -16,6 +17,7 @@ namespace ChatClient
         public MainWindow()
         {
             InitializeComponent();
+            lstUsers.MouseDoubleClick += LstUsers_MouseDoubleClick;
         }
 
         private async void btnConnect_Click(object sender, RoutedEventArgs e)
@@ -29,6 +31,18 @@ namespace ChatClient
                     stream = client.GetStream();
                     username = txtUser.Text;
 
+                    // kirim pesan join
+                    var joinMsg = new ChatMessage
+                    {
+                        type = "join",
+                        from = username,
+                        text = "",
+                        ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                    };
+                    string joinJson = JsonSerializer.Serialize(joinMsg);
+                    byte[] joinData = Encoding.UTF8.GetBytes(joinJson);
+                    await stream.WriteAsync(joinData);
+
                     _ = Task.Run(ReceiveLoop);
 
                     btnConnect.Content = "Disconnect";
@@ -41,7 +55,7 @@ namespace ChatClient
             }
             else
             {
-                client.Close();
+                client?.Close();
                 btnConnect.Content = "Connect";
                 lstChat.Items.Add("Disconnected");
             }
@@ -50,6 +64,7 @@ namespace ChatClient
         private async void btnSend_Click(object sender, RoutedEventArgs e)
         {
             if (stream == null) return;
+            if (string.IsNullOrWhiteSpace(txtMessage.Text)) return;
 
             var msg = new ChatMessage
             {
@@ -83,9 +98,25 @@ namespace ChatClient
                 try
                 {
                     var msg = JsonSerializer.Deserialize<ChatMessage>(json);
+                    if (msg == null) continue;
+
                     Dispatcher.Invoke(() =>
                     {
-                        lstChat.Items.Add($"{msg!.from}: {msg.text}");
+                        if (msg.type == "sys")
+                        {
+                            lstChat.Items.Add($"[SYSTEM] {msg.text}");
+                        }
+                        else if (msg.type == "userlist")
+                        {
+                            lstUsers.Items.Clear();
+                            var users = msg.text.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                            foreach (var u in users)
+                                lstUsers.Items.Add(u);
+                        }
+                        else if (msg.type == "msg")
+                        {
+                            lstChat.Items.Add($"{msg.from}: {msg.text}");
+                        }
                     });
                 }
                 catch
@@ -95,6 +126,18 @@ namespace ChatClient
             }
 
             Dispatcher.Invoke(() => lstChat.Items.Add("Disconnected from server."));
+        }
+
+        // klik user -> auto isi "/w username "
+        private void LstUsers_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (lstUsers.SelectedItem != null)
+            {
+                string targetUser = lstUsers.SelectedItem.ToString()!;
+                txtMessage.Text = $"/w {targetUser} ";
+                txtMessage.Focus();
+                txtMessage.CaretIndex = txtMessage.Text.Length;
+            }
         }
     }
 }
