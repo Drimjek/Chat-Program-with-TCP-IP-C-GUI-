@@ -137,7 +137,15 @@ namespace ChatClient
                         }
                         else if (msg.type == "msg")
                         {
-                            lstChat.Items.Add($"{msg.from}: {msg.text}");
+                            //Memberikan warna berbeda untuk private chat
+                            if (msg.text.StartsWith("(whisper)"))
+                            {
+                                lstChat.Items.Add($"[Whisper] {msg.from}: {msg.text.Replace("(whisper)", "").Trim()}");
+                            }
+                            else
+                            {
+                                lstChat.Items.Add($"{msg.from}: {msg.text}");
+                            }
                         }
                     });
                 }
