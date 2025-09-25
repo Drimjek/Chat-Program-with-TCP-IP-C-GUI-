@@ -14,6 +14,8 @@ namespace ChatClient
         NetworkStream? stream;
         string username = "";
 
+        //Theme
+        private bool isDark = false;
         public MainWindow()
         {
             InitializeComponent();
@@ -78,6 +80,26 @@ namespace ChatClient
             byte[] data = Encoding.UTF8.GetBytes(json);
             await stream.WriteAsync(data);
             txtMessage.Clear();
+        }
+
+        private void btnDarkMode_Click(object sender, RoutedEventArgs e)
+        {
+            var dict = new ResourceDictionary();
+            if (!isDark)
+            {
+                dict.Source = new Uri("Themes/DarkTheme.xaml", UriKind.Relative);
+                btnDarkMode.Content = "☀ Light Mode";
+            }
+            else
+            {
+                dict.Source = new Uri("Themes/LightTheme.xaml", UriKind.Relative);
+                btnDarkMode.Content = "🌙 Dark Mode";
+            }
+
+            Application.Current.Resources.MergedDictionaries.Clear();
+            Application.Current.Resources.MergedDictionaries.Add(dict);
+
+            isDark = !isDark;
         }
 
         private async Task ReceiveLoop()
