@@ -75,8 +75,56 @@ class Program
                 }
                 else if (msg.type == "msg")
                 {
-                    // Broadcast normal chat
-                    Broadcast(msg);
+                    if (msg.text.StartsWith("/w "))
+                    {
+                        // Format: /w target pesan
+                        var parts = msg.text.Split(' ', 3);
+                        if (parts.Length >= 3)
+                        {
+                            var targetUser = parts[1];
+                            var privateMessage = parts[2];
+
+                            if (users.ContainsKey(targetUser))
+                            {
+                                // Buat pesan ke target
+                                var whisperToTarget = new ChatMessage
+                                {
+                                    type = "msg",
+                                    from = msg.from,
+                                    text = $"(whisper) {privateMessage}",
+                                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                                };
+                                _ = SendAsync(users[targetUser], whisperToTarget);
+
+                                // Kirim juga ke pengirim sebagai konfirmasi
+                                var whisperToSender = new ChatMessage
+                                {
+                                    type = "msg",
+                                    from = $"You -> {targetUser}",
+                                    text = privateMessage,
+                                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                                };
+                                _ = SendAsync(client, whisperToSender);
+                            }
+                            else
+                            {
+                                // Target tidak ditemukan
+                                var err = new ChatMessage
+                                {
+                                    type = "sys",
+                                    from = "server",
+                                    text = $"User {targetUser} not found.",
+                                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                                };
+                                _ = SendAsync(client, err);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Normal broadcast ke semua user
+                        Broadcast(msg);
+                    }
                 }
             }
         }
