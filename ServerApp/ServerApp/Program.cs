@@ -7,29 +7,39 @@ class Program
 {
     static Dictionary<string, TcpClient> users = new(); // username -> client
     const int PORT = 9000;
+    static readonly object logLock = new();
 
     static async Task Main()
     {
         var listener = new TcpListener(IPAddress.Any, PORT);
         listener.Start();
-        Console.WriteLine($"Server running on port {PORT}");
+        Log($"Server running on port {PORT}");
 
         while (true)
         {
-            var client = await listener.AcceptTcpClientAsync();
-            Console.WriteLine("Client connected");
-            _ = HandleClient(client);
+            try
+            {
+                var client = await listener.AcceptTcpClientAsync();
+                Log("Client connected.");
+                _ = HandleClient(client);
+            }
+            catch (Exception ex)
+            {
+                Log($"[ERROR] Accept client failed: {ex.Message}");
+            }
         }
     }
 
     static async Task HandleClient(TcpClient client)
     {
-        using var stream = client.GetStream();
-        var buffer = new byte[4096];
+        NetworkStream? stream = null;
         string? username = null;
 
         try
         {
+            stream = client.GetStream();
+            var buffer = new byte[4096];
+
             while (client.Connected)
             {
                 int read = await stream.ReadAsync(buffer);
@@ -37,15 +47,13 @@ class Program
 
                 var json = Encoding.UTF8.GetString(buffer, 0, read);
                 var msg = JsonSerializer.Deserialize<ChatMessage>(json);
-
                 if (msg == null) continue;
 
-                // Jika pesan pertama adalah join
+                // JOIN
                 if (msg.type == "join" && username == null)
                 {
                     if (users.ContainsKey(msg.from))
                     {
-                        // Username sudah ada
                         var err = new ChatMessage
                         {
                             type = "sys",
@@ -54,14 +62,13 @@ class Program
                             ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                         };
                         await SendAsync(client, err);
-                        break; // putuskan koneksi
+                        break;
                     }
 
                     username = msg.from;
                     users[username] = client;
-                    Console.WriteLine($"{username} joined.");
+                    Log($"{username} joined.");
 
-                    // Broadcast system join
                     Broadcast(new ChatMessage
                     {
                         type = "sys",
@@ -70,59 +77,17 @@ class Program
                         ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                     });
 
-                    // Kirim daftar user ke semua client
                     SendUserList();
                 }
+                // MESSAGE
                 else if (msg.type == "msg")
                 {
-                    if (msg.text.StartsWith("/w "))
+                    if (!string.IsNullOrEmpty(msg.to))
                     {
-                        // Format: /w target pesan
-                        var parts = msg.text.Split(' ', 3);
-                        if (parts.Length >= 3)
-                        {
-                            var targetUser = parts[1];
-                            var privateMessage = parts[2];
-
-                            if (users.ContainsKey(targetUser))
-                            {
-                                // Buat pesan ke target
-                                var whisperToTarget = new ChatMessage
-                                {
-                                    type = "msg",
-                                    from = msg.from,
-                                    text = $"(whisper) {privateMessage}",
-                                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                                };
-                                _ = SendAsync(users[targetUser], whisperToTarget);
-
-                                // Kirim juga ke pengirim sebagai konfirmasi
-                                var whisperToSender = new ChatMessage
-                                {
-                                    type = "msg",
-                                    from = $"You -> {targetUser}",
-                                    text = privateMessage,
-                                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                                };
-                                _ = SendAsync(client, whisperToSender);
-                            }
-                            else
-                            {
-                                // Target tidak ditemukan
-                                var err = new ChatMessage
-                                {
-                                    type = "sys",
-                                    from = "server",
-                                    text = $"User {targetUser} not found.",
-                                    ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
-                                };
-                                _ = SendAsync(client, err);
-                            }
-                        }
+                        await HandlePrivateMessage(client, msg);
                     }
                     else
                     {
-                        // Normal broadcast ke semua user
                         Broadcast(msg);
                     }
                 }
@@ -130,16 +95,15 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            Log($"[ERROR] {ex.Message}");
         }
-        finally
+        finally //Gracefull shutdown
         {
             if (username != null && users.ContainsKey(username))
             {
                 users.Remove(username);
-                Console.WriteLine($"{username} left.");
+                Log($"{username} left.");
 
-                // Broadcast leave
                 Broadcast(new ChatMessage
                 {
                     type = "sys",
@@ -151,7 +115,49 @@ class Program
                 SendUserList();
             }
 
-            client.Close();
+            try { stream?.Dispose(); } catch { }
+            try { client.Close(); } catch { }
+        }
+    }
+
+    static async Task HandlePrivateMessage(TcpClient sender, ChatMessage msg)
+    {
+        if (users.TryGetValue(msg.to, out var targetClient))
+        {
+            // ke target
+            var whisperToTarget = new ChatMessage
+            {
+                type = "msg",
+                from = msg.from,
+                to = msg.to,
+                text = $"(whisper) {msg.text}",
+                ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+            await SendAsync(targetClient, whisperToTarget);
+
+            // konfirmasi ke pengirim
+            var whisperToSender = new ChatMessage
+            {
+                type = "msg",
+                from = $"You -> {msg.to}",
+                to = msg.to,
+                text = msg.text,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+            await SendAsync(sender, whisperToSender);
+
+            Log($"[PM] {msg.from} -> {msg.to}: {msg.text}");
+        }
+        else
+        {
+            var err = new ChatMessage
+            {
+                type = "sys",
+                from = "server",
+                text = $"User {msg.to} not found.",
+                ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+            };
+            await SendAsync(sender, err);
         }
     }
 
@@ -159,19 +165,20 @@ class Program
     {
         try
         {
-            var json = JsonSerializer.Serialize(msg);
+            if (!client.Connected) return;
+            var json = JsonSerializer.Serialize(msg) + "\n";
             var data = Encoding.UTF8.GetBytes(json);
-            await client.GetStream().WriteAsync(data);
+            await client.GetStream().WriteAsync(data, 0, data.Length);
         }
-        catch
+        catch (Exception ex)
         {
-            // ignore send error
+            Log($"[ERROR] Send failed: {ex.Message}");
         }
     }
 
     static void Broadcast(ChatMessage msg)
     {
-        var json = JsonSerializer.Serialize(msg);
+        var json = JsonSerializer.Serialize(msg) + "\n";
         var data = Encoding.UTF8.GetBytes(json);
 
         foreach (var kvp in users.ToList())
@@ -183,6 +190,7 @@ class Program
             catch
             {
                 users.Remove(kvp.Key);
+                Log($"[WARN] Removed {kvp.Key} (disconnected).");
             }
         }
     }
@@ -198,5 +206,15 @@ class Program
             ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         };
         Broadcast(msg);
+    }
+
+    static void Log(string text)
+    {
+        string line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {text}";
+        Console.WriteLine(line);
+        lock (logLock)
+        {
+            File.AppendAllText("server.log", line + Environment.NewLine);
+        }
     }
 }

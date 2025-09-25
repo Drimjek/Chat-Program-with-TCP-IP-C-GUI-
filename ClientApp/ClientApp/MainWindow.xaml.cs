@@ -16,6 +16,7 @@ namespace ChatClient
 
         //Theme
         private bool isDark = false;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -57,28 +58,54 @@ namespace ChatClient
             }
             else
             {
+                // Graceful shutdown
+                stream?.Close();
                 client?.Close();
+                stream = null;
+                client = null;
                 btnConnect.Content = "Connect";
                 lstChat.Items.Add("Disconnected");
+                lstUsers.Items.Clear();
             }
         }
 
         private async void btnSend_Click(object sender, RoutedEventArgs e)
         {
+            await SendMessage();
+        }
+
+        private async Task SendMessage()
+        {
             if (stream == null) return;
             if (string.IsNullOrWhiteSpace(txtMessage.Text)) return;
+
+            string messageText = txtMessage.Text;
+            string? targetUser = null;
+
+            // Parsing command /w target pesan
+            if (messageText.StartsWith("/w "))
+            {
+                var parts = messageText.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 3)
+                {
+                    targetUser = parts[1];
+                    messageText = parts[2];
+                }
+            }
 
             var msg = new ChatMessage
             {
                 type = "msg",
                 from = username,
-                text = txtMessage.Text,
+                to = targetUser ?? "",
+                text = messageText,
                 ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             };
 
             string json = JsonSerializer.Serialize(msg);
             byte[] data = Encoding.UTF8.GetBytes(json);
             await stream.WriteAsync(data);
+
             txtMessage.Clear();
         }
 
@@ -137,10 +164,13 @@ namespace ChatClient
                         }
                         else if (msg.type == "msg")
                         {
-                            //Memberikan warna berbeda untuk private chat
-                            if (msg.text.StartsWith("(whisper)"))
+                            // Bedakan whisper dan normal chat
+                            if (!string.IsNullOrEmpty(msg.to))
                             {
-                                lstChat.Items.Add($"[Whisper] {msg.from}: {msg.text.Replace("(whisper)", "").Trim()}");
+                                if (msg.from.StartsWith("You ->"))
+                                    lstChat.Items.Add($"{msg.from}: {msg.text}");
+                                else
+                                    lstChat.Items.Add($"[Whisper] {msg.from} -> {msg.to}: {msg.text}");
                             }
                             else
                             {
@@ -156,6 +186,7 @@ namespace ChatClient
             }
 
             Dispatcher.Invoke(() => lstChat.Items.Add("Disconnected from server."));
+            lstUsers.Items.Clear();
         }
 
         // klik user -> auto isi "/w username "
