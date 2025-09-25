@@ -60,9 +60,14 @@ class Program
                             from = "server",
                             text = "Username already taken!",
                             ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+                            
                         };
                         await SendAsync(client, err);
-                        break;
+
+                        stream.Close();
+                        client.Close();
+                        Log($"Username taken :, {msg.from}, connection closed ");
+                        return;
                     }
 
                     username = msg.from;
@@ -169,6 +174,8 @@ class Program
             var json = JsonSerializer.Serialize(msg) + "\n";
             var data = Encoding.UTF8.GetBytes(json);
             await client.GetStream().WriteAsync(data, 0, data.Length);
+            Log($" {msg.from}: {msg.text}");
+
         }
         catch (Exception ex)
         {

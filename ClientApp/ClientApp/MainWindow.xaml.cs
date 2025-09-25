@@ -185,8 +185,18 @@ namespace ChatClient
                 }
             }
 
-            Dispatcher.Invoke(() => lstChat.Items.Add("Disconnected from server."));
-            lstUsers.Items.Clear();
+            Dispatcher.Invoke(() =>
+            {
+                lstChat.Items.Add("Disconnected from server");
+                lstUsers.Items.Clear();
+
+                btnConnect.Content = "Connect";
+            });
+
+            stream?.Close();
+            client?.Close();
+            stream = null;
+            client = null;
         }
 
         // klik user -> auto isi "/w username "
